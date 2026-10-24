@@ -1,0 +1,46 @@
+drive:
+  name: Drive
+  description: >
+    Steers the robot in remote-control mode for a short time, then stops it and
+    leaves remote-control mode. Keep the robot in the water while driving.
+  fields:
+    direction:
+      name: Direction
+      required: true
+      selector:
+        select:
+          options:
+            - forward
+            - backward
+            - left
+            - right
+    speed:
+      name: Speed
+      default: 50
+      selector:
+        number:
+          min: 1
+          max: 100
+          step: 1
+          unit_of_measurement: "%"
+    duration:
+      name: Duration
+      default: 1
+      selector:
+        number:
+          min: 0.2
+          max: 5
+          step: 0.1
+          unit_of_measurement: "s"
+
+quit_manual_drive:
+  name: Quit manual drive
+  description: >
+    Exits remote-control mode. Sent automatically at the end of a drive call;
+    use it directly if a drive call was interrupted.
+
+reset_filter_indicator:
+  name: Reset filter indicator
+  description: >
+    Clears the filter-full indicator on the power supply after cleaning the
+    filter bag.
