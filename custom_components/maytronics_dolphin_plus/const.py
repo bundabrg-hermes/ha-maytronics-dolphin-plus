@@ -70,6 +70,11 @@ DRIVE_MAX_DURATION = 5.0
 # of seconds between frames and commits mode changes asynchronously).
 CONTROL_SETTLE_SEC = 2.0
 
+# A single read after a write can still report the previous value, so control
+# writes are confirmed by re-reading until the new value shows up.
+CONTROL_CONFIRM_ATTEMPTS = 3
+CONTROL_CONFIRM_DELAY_SEC = 3.0
+
 DATA_BLE_SESSION = "ble_session"
 DATA_COORDINATOR = "coordinator"
 DATA_KEEPALIVE_TASK = "keepalive_task"

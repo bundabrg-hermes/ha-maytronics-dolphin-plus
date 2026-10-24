@@ -13,6 +13,9 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
 from .connection import DolphinPlusBleConnection
 from .const import (
+    CONTROL_CONFIRM_ATTEMPTS,
+    CONTROL_CONFIRM_DELAY_SEC,
+    CONTROL_SETTLE_SEC,
     DOMAIN,
     OPT_STATE_POLL_SEC,
     POWER_CONFIRM_ATTEMPTS,
@@ -109,3 +112,36 @@ class DolphinPlusCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 )
                 return True
         return False
+
+    async def async_refresh_until_field(
+        self,
+        key: str,
+        expected: Any,
+        *,
+        attempts: int = CONTROL_CONFIRM_ATTEMPTS,
+        delay_sec: float = CONTROL_CONFIRM_DELAY_SEC,
+    ) -> Any:
+        """Re-read ``system_status`` until ``key`` reports ``expected``.
+
+        The power supply applies control writes asynchronously, so a single
+        read issued straight after a write often still shows the previous
+        value. Returns the last value observed, which is ``expected`` once
+        the write is confirmed.
+        """
+        observed: Any = None
+        for attempt in range(max(1, attempts)):
+            await asyncio.sleep(CONTROL_SETTLE_SEC if attempt == 0 else delay_sec)
+            try:
+                status = await self._session.async_read_system_status()
+            except Exception as err:  # noqa: BLE001
+                _LOGGER.debug("Dolphin Plus write confirm failed: %s", err)
+                continue
+            if not status:
+                continue
+            observed = status.get(key)
+            if observed == expected:
+                self.async_set_updated_data(
+                    {**(self.data or {}), "poll_ok": True, **status}
+                )
+                return observed
+        return observed

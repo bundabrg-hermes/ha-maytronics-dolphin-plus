@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import functools
 import logging
 from contextlib import suppress
 from typing import Any
@@ -119,18 +120,21 @@ def _async_register_services(hass: HomeAssistant) -> None:
     if hass.services.has_service(DOMAIN, SERVICE_DRIVE):
         return
     hass.services.async_register(
-        DOMAIN, SERVICE_DRIVE, _async_handle_drive, schema=DRIVE_SCHEMA
+        DOMAIN,
+        SERVICE_DRIVE,
+        functools.partial(_async_handle_drive, hass),
+        schema=DRIVE_SCHEMA,
     )
     hass.services.async_register(
         DOMAIN,
         SERVICE_QUIT_MANUAL_DRIVE,
-        _async_handle_quit_manual_drive,
+        functools.partial(_async_handle_quit_manual_drive, hass),
         schema=vol.Schema(_TARGET_SCHEMA),
     )
     hass.services.async_register(
         DOMAIN,
         SERVICE_RESET_FILTER_INDICATOR,
-        _async_handle_reset_filter_indicator,
+        functools.partial(_async_handle_reset_filter_indicator, hass),
         schema=vol.Schema(_TARGET_SCHEMA),
     )
 

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import Any
 
@@ -17,7 +16,6 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .connection import DolphinPlusBleConnection
 from .const import (
-    CONTROL_SETTLE_SEC,
     CONF_ADDRESS,
     CONF_NAME,
     DATA_BLE_SESSION,
@@ -125,9 +123,9 @@ class DolphinPlusCleaningModeSelect(CoordinatorEntity, SelectEntity):
         self.async_write_ha_state()
         try:
             await self._session().async_set_cleaning_mode(code)
-            await asyncio.sleep(CONTROL_SETTLE_SEC)
-            await self.coordinator.async_request_refresh()
-            confirmed = (self.coordinator.data or {}).get("cleaning_mode")
+            confirmed = await self.coordinator.async_refresh_until_field(
+                "cleaning_mode", code
+            )
             if confirmed is not None and int(confirmed) != code:
                 _LOGGER.warning(
                     "Cleaning mode: %s was sent but the robot reports %s",
