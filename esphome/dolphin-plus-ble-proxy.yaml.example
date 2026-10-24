@@ -43,4 +43,12 @@ script:
 #       variables:
 #         payload: int[]
 #       then:
-#         - lambda: "id(dolphin_iot_notify_script)->execute(payload);"
+#         # (loop required on ESPHome 2026.10+: action int[] vars are
+#         #  FixedVector views, not std::vector
+#         - lambda: |-
+#             std::vector<int> converted;
+#             converted.reserve(payload.size());
+#             for (auto b : payload) {
+#               converted.push_back(static_cast<int>(b));
+#             }
+#             id(dolphin_iot_notify_script)->execute(std::move(converted));
