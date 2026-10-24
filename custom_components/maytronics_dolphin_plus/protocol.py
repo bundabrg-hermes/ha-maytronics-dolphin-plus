@@ -160,6 +160,22 @@ def iter_iot_frames(buffer: bytes) -> tuple[list[bytes], bytes]:
         data_len = (buffer[i + 5] << 8) | buffer[i + 6]
         total = IOT_HEADER_LEN + data_len + IOT_CHECKSUM_LEN
         if i + total > len(buffer):
+            # Some firmwares (e.g. AW5) count the 2-byte checksum *inside*
+            # data_len and their trailing checksum does not match the app's
+            # sum. Accept a full 7+data_len frame unverified in that case.
+            total_lenient = IOT_HEADER_LEN + data_len
+            if (
+                data_len >= IOT_CHECKSUM_LEN
+                and total_lenient >= IOT_HEADER_LEN + IOT_CHECKSUM_LEN
+                and i + total_lenient <= len(buffer)
+            ):
+                frame = buffer[i : i + total_lenient]
+                _LOGGER.debug(
+                    "Plus BLE: accepting unverified frame (dlen includes cs): %s",
+                    frame.hex(),
+                )
+                frames.append(frame)
+                i += total_lenient
             break
         frame = buffer[i : i + total]
         if _verify_iot_checksum(frame):
@@ -225,6 +241,27 @@ class IotAsciiRxBuffer:
             frame_len = IOT_HEADER_LEN + data_len + IOT_CHECKSUM_LEN
             need_hex = frame_len * 2
             if len(hex_part) < need_hex:
+                # Firmware quirk (AW5): data_len includes the checksum bytes
+                # and the trailing checksum itself is bogus. Accept a full
+                # 7+data_len frame unverified.
+                need_lenient = (IOT_HEADER_LEN + data_len) * 2
+                if (
+                    data_len >= IOT_CHECKSUM_LEN
+                    and len(hex_part) >= need_lenient
+                ):
+                    try:
+                        frame = bytes.fromhex(hex_part[:need_lenient])
+                    except ValueError:
+                        self._text = ""
+                        break
+                    self._text = hex_part[need_lenient:]
+                    _LOGGER.debug(
+                        "Plus BLE: accepting unverified ASCII frame "
+                        "(dlen includes cs): %s",
+                        frame.hex(),
+                    )
+                    frames.append(frame)
+                    continue
                 break
             try:
                 frame = bytes.fromhex(hex_part[:need_hex])
