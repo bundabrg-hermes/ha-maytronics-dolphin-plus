@@ -125,6 +125,7 @@ def build_system_status_request(spec: dict[str, Any]) -> bytes:
     return build_iot_command(spec, CMD_SYSTEM_STATUS)
 
 
+
 def encode_iot_notify_text(frame: bytes) -> bytes:
     """Wrap a binary IoT frame for GATT-server notify (ASCII ``03:<hex>``)."""
     return (IOT_NOTIFY_PREFIX + frame.hex()).encode("ascii")
@@ -290,17 +291,178 @@ def parse_iot_frame_payload(frame: bytes) -> tuple[int, int, bytes]:
     return opcode, data_len, payload
 
 
-def parse_system_status(payload: bytes) -> dict[str, int | None]:
-    """Map ``system_status`` response bytes after removing the leading ACK."""
+PWS_STATE_NAMES = {
+    0: "off",
+    1: "on",
+    2: "hold_weekly",
+    3: "hold_delay",
+    4: "programming",
+    5: "cleaning",
+    6: "sleep",
+}
+
+ROBOT_STATE_NAMES = {
+    0: "init",
+    1: "mapping",
+    2: "scanning",
+    3: "recovery",
+    4: "finished",
+    5: "fault",
+    6: "programming",
+    7: "not_connected",
+}
+
+CLEAN_MODE_NAMES = {
+    1: "regular",
+    2: "fast",
+    3: "cove",
+    4: "floor",
+    5: "waterline",
+    6: "ultra",
+    7: "spot",
+    8: "wall",
+    9: "tictac",
+    10: "custom",
+    11: "pickup",
+    15: "stairs",
+    254: "empty",
+}
+
+# Order of the 2-byte duration matrix in system_status bytes 30+ (verified
+# against the reference SM profile durations on a live M7 unit).
+MODE_DURATION_ORDER = (
+    "regular",
+    "fast",
+    "cove",
+    "floor",
+    "waterline",
+    "ultra",
+    "spot",
+    "wall",
+    "tictac",
+    "custom",
+    "pickup",
+)
+
+
+def pws_state_name(value: int | None) -> str | None:
+    if value is None:
+        return None
+    return PWS_STATE_NAMES.get(int(value), f"unknown_{value}")
+
+
+def robot_state_name(value: int | None) -> str | None:
+    if value is None:
+        return None
+    return ROBOT_STATE_NAMES.get(int(value), f"unknown_{value}")
+
+
+def clean_mode_name(value: int | None) -> str | None:
+    if value is None:
+        return None
+    val = int(value)
+    if val == 254:
+        return "empty"
+    return CLEAN_MODE_NAMES.get(val, f"unknown_{val}")
+
+
+def filter_band(value: int | None) -> str | None:
+    """Map the Advanced FBI filter byte (0-102) to a named band."""
+    if value is None:
+        return None
+    val = int(value)
+    if val == 0:
+        return "empty"
+    if val <= 25:
+        return "partially_full"
+    if val <= 74:
+        return "getting_full"
+    if val <= 99:
+        return "almost_full"
+    if val == 100:
+        return "full"
+    if val == 101:
+        return "sensor_fault"
+    if val == 102:
+        return "not_available"
+    return "unknown"
+
+
+def parse_system_status(payload: bytes) -> dict[str, Any]:
+    """Map ``system_status`` response bytes after removing the leading ACK.
+
+    Layout (community spec + live M7 capture, data bytes after the ACK):
+    0 mu_state, 1 sm_state, 2 filter, 3 cleaning_mode,
+    4-5 configured cycle minutes, 6-9 cycle start local epoch,
+    10-13 cycle start UTC epoch, 14 is_smart, 15 next cycle mode,
+    16-17 delay-to-next minutes, 18-29 active fault block,
+    30+ per-mode duration matrix.
+    Some firmwares (M7) also include the checksum bytes inside the payload.
+    """
     # Wire layout: ACK + mu_state + sm_state + filter + cleaning_mode + ...
     data = payload[1:] if payload else b""
-    if len(data) < 2:
-        return {"mu_state": None, "sm_state": None, "cleaning_mode": None}
-    return {
-        "mu_state": data[0],
-        "sm_state": data[1],
-        "cleaning_mode": data[3] if len(data) > 3 else None,
+
+    def u8(idx: int) -> int | None:
+        return data[idx] if len(data) > idx else None
+
+    def u16(idx: int) -> int | None:
+        if len(data) >= idx + 2:
+            return (data[idx] << 8) | data[idx + 1]
+        return None
+
+    def epoch(idx: int) -> int | None:
+        if len(data) < idx + 4:
+            return None
+        val = int.from_bytes(data[idx : idx + 4], "big")
+        return val if 1_600_000_000 <= val <= 2_600_000_000 else None
+
+    out: dict[str, Any] = {
+        "mu_state": u8(0),
+        "sm_state": u8(1),
+        "cleaning_mode": u8(3) if len(data) > 3 else None,
     }
+    if len(data) > 2:
+        out["filter_state"] = data[2]
+    if len(data) >= 14:
+        out["cycle_info_raw"] = data[4:14].hex()
+        dur = u16(4)
+        if dur is not None and dur <= 1440:
+            out["cycle_time_min"] = dur
+        local_ts = epoch(6)
+        if local_ts is not None:
+            out["cycle_start_local"] = local_ts
+        utc_ts = epoch(10)
+        if utc_ts is not None:
+            out["cycle_start_utc"] = utc_ts
+    if len(data) > 14:
+        out["is_smart"] = data[14]
+    if len(data) >= 18:
+        out["next_cycle_mode"] = u8(15)
+        out["next_cycle_delay_min"] = u16(16)
+    fault_code = u8(18)
+    if fault_code is not None:
+        out["faults_code"] = fault_code
+        out["has_faults"] = fault_code not in (0x00, 0xFF)
+        if out["has_faults"] and len(data) >= 30:
+            out["faults_pcb_hours"] = u16(19)
+            out["faults_pcb_minutes"] = u8(21)
+            out["faults_cycle_counter"] = u16(22)
+            out["faults_value_1"] = u16(24)
+            out["faults_value_2"] = u16(26)
+            out["faults_value_3"] = u16(28)
+    if len(data) >= 51:
+        durations = {
+            name: int.from_bytes(data[30 + 2 * i : 32 + 2 * i], "big")
+            for i, name in enumerate(MODE_DURATION_ORDER)
+        }
+        # Sanity: plausible minutes only, else expose raw hex.
+        if all(0 < v <= 1440 for v in durations.values()):
+            out["mode_durations"] = durations
+        else:
+            out["cleaning_modes_raw"] = data[30:52].hex()
+    elif len(data) > 30:
+        out["cleaning_modes_raw"] = data[30:].hex()
+    return out
 
 
 def sm_state_implies_power_on(sm_state: int | None) -> bool | None:

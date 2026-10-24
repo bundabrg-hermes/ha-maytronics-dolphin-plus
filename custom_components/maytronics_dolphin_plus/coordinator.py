@@ -62,14 +62,16 @@ class DolphinPlusCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         sm = status.get("sm_state")
         power = sm_state_to_power_state(sm if isinstance(sm, int) else None)
-        return {
+        data: dict[str, Any] = {
             "poll_ok": True,
+            **status,
             "sm_state": sm,
             "mu_state": status.get("mu_state"),
             "cleaning_mode": status.get("cleaning_mode"),
             "power_state": power,
             "power_on": sm_state_implies_power_on(sm if isinstance(sm, int) else None),
         }
+        return data
 
     async def async_refresh_until_power(
         self,
