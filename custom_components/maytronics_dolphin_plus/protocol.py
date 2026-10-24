@@ -437,8 +437,13 @@ def parse_system_status(payload: bytes) -> dict[str, Any]:
     if len(data) > 14:
         out["is_smart"] = data[14]
     if len(data) >= 18:
-        out["next_cycle_mode"] = u8(15)
-        out["next_cycle_delay_min"] = u16(16)
+        # Bytes 15-17 are documented as the next scheduled program (mode +
+        # delay). Observed on an M7 PWS (2026-10): the pair mirrors the
+        # *currently configured* program (mode byte == running mode, value ==
+        # configured cycle minutes) and does not count down while a cycle runs,
+        # so it is exposed as the armed program rather than a wall-clock ETA.
+        out["armed_program_mode"] = u8(15)
+        out["armed_program_minutes"] = u16(16)
     fault_code = u8(18)
     if fault_code is not None:
         out["faults_code"] = fault_code

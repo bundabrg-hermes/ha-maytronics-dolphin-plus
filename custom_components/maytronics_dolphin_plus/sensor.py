@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone as dt_timezone
+from datetime import datetime, timezone as dt_timezone
 
 UTC = dt_timezone.utc
 
@@ -45,7 +45,6 @@ async def async_setup_entry(
             DolphinPlusMuStateSensor(coordinator, entry),
             DolphinPlusCleaningModeSensor(coordinator, entry),
             DolphinPlusCycleProgressSensor(coordinator, entry),
-            DolphinPlusNextRunSensor(coordinator, entry),
             DolphinPlusFilterSensor(coordinator, entry),
             DolphinPlusFaultSensor(coordinator, entry),
         ]
@@ -147,6 +146,11 @@ class DolphinPlusCleaningModeSensor(_DolphinPlusSensorBase):
             attrs["mode_durations"] = data["mode_durations"]
         if "cleaning_modes_raw" in data:
             attrs["cleaning_modes_raw"] = data["cleaning_modes_raw"]
+        armed_mode = clean_mode_name(data.get("armed_program_mode"))
+        if armed_mode:
+            attrs["armed_program_mode"] = armed_mode
+        if isinstance(data.get("armed_program_minutes"), int):
+            attrs["armed_program_minutes"] = data["armed_program_minutes"]
         return attrs
 
 
@@ -193,42 +197,6 @@ class DolphinPlusCycleProgressSensor(_DolphinPlusSensorBase):
         if data.get("cycle_start_local"):
             attrs["robot_clock_local"] = datetime.fromtimestamp(
                 data["cycle_start_local"], tz=UTC
-            ).isoformat()
-        return attrs
-
-
-class DolphinPlusNextRunSensor(_DolphinPlusSensorBase):
-    """Delay until the next scheduled/programmed cleaning cycle."""
-
-    _attr_native_unit_of_measurement = "min"
-    _attr_state_class = SensorStateClass.MEASUREMENT
-    _attr_icon = "mdi:calendar-clock"
-
-    def __init__(self, coordinator: DolphinPlusCoordinator, entry: ConfigEntry) -> None:
-        super().__init__(coordinator, entry, key="next_run", name="Next scheduled run")
-
-    @property
-    def native_value(self) -> int | None:
-        data = self.coordinator.data or {}
-        if not data.get("poll_ok"):
-            return None
-        delay = data.get("next_cycle_delay_min")
-        if not isinstance(delay, int) or delay in (0, 0xFFFF):
-            return None
-        return delay
-
-    @property
-    def extra_state_attributes(self) -> dict:
-        data = self.coordinator.data or {}
-        attrs: dict = {}
-        mode = clean_mode_name(data.get("next_cycle_mode"))
-        if mode:
-            attrs["mode"] = mode
-        delay = data.get("next_cycle_delay_min")
-        if isinstance(delay, int) and delay not in (0, 0xFFFF):
-            attrs["mode"] = attrs.get("mode") or "unknown"
-            attrs["starts_at"] = dt_util.as_local(
-                datetime.now(UTC) + timedelta(minutes=delay)
             ).isoformat()
         return attrs
 
