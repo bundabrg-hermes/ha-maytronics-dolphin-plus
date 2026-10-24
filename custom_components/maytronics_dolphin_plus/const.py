@@ -54,6 +54,22 @@ POWER_CONFIRM_ATTEMPTS = 5
 POWER_CONFIRM_DELAY_SEC = 0.55
 POWER_CONFIRM_INITIAL_DELAY_SEC = 0.45
 
+SERVICE_DRIVE = "drive"
+SERVICE_QUIT_MANUAL_DRIVE = "quit_manual_drive"
+SERVICE_RESET_FILTER_INDICATOR = "reset_filter_indicator"
+
+ATTR_DIRECTION = "direction"
+ATTR_SPEED = "speed"
+ATTR_DURATION = "duration"
+
+# Remote control is a hold-to-drive control: cap how long one service call can
+# keep the drive energised so a dropped automation cannot run the robot dry.
+DRIVE_MAX_DURATION = 5.0
+
+# Gap between issuing a control and re-reading status (the PWS needs a couple
+# of seconds between frames and commits mode changes asynchronously).
+CONTROL_SETTLE_SEC = 2.0
+
 DATA_BLE_SESSION = "ble_session"
 DATA_COORDINATOR = "coordinator"
 DATA_KEEPALIVE_TASK = "keepalive_task"

@@ -32,6 +32,11 @@ from .iot_gatt_esphome import (
 from .options import get_integration_options
 from .protocol import (
     async_load_protocol_spec,
+    build_manual_drive,
+    build_quit_manual_drive,
+    build_reset_filter_indicator,
+    build_set_cleaning_mode,
+    build_set_cycle_time,
     build_shutdown,
     build_startup,
     build_system_status_request,
@@ -51,7 +56,7 @@ from .transport_discovery import (
 
 _LOGGER = logging.getLogger(__name__)
 
-_INTEGRATION_VERSION = "0.1.10"
+_INTEGRATION_VERSION = "0.1.11"
 
 _BLE_CONNECT_TIMEOUT = 35.0
 _NOTIFY_TIMEOUT = 4.0
@@ -262,6 +267,7 @@ class DolphinPlusBleConnection:
         *,
         expect_opcode: int | None = None,
         timeout: float = _NOTIFY_TIMEOUT,
+        expect_response: bool = True,
     ) -> bytes | None:
         if self._profile != PROFILE_IOT:
             raise HomeAssistantError(
@@ -329,6 +335,10 @@ class DolphinPlusBleConnection:
             else:
                 await self._write_payload(client, resolved, payload)
             await asyncio.sleep(_POST_WRITE_DELAY)
+            if not expect_response:
+                # Actuation commands (steering) never ACK; waiting on them can
+                # stall the command queue or drop the ACL link on some PWS.
+                return None
             return await asyncio.wait_for(fut, timeout=timeout)
         except asyncio.TimeoutError:
             return None
@@ -368,11 +378,21 @@ class DolphinPlusBleConnection:
                 ) from last_err
             raise last_err
 
-    async def async_send_command(self, payload: bytes, *, expect_opcode: int | None) -> None:
+    async def async_send_command(
+        self,
+        payload: bytes,
+        *,
+        expect_opcode: int | None,
+        expect_response: bool = True,
+    ) -> None:
         self._command_waiters += 1
         try:
             async with self._lock:
-                await self._exchange_locked(payload, expect_opcode=expect_opcode)
+                await self._exchange_locked(
+                    payload,
+                    expect_opcode=expect_opcode,
+                    expect_response=expect_response,
+                )
         finally:
             self._command_waiters = max(0, self._command_waiters - 1)
 
@@ -387,6 +407,53 @@ class DolphinPlusBleConnection:
         payload = build_shutdown(spec)
         _LOGGER.info("Dolphin Plus SHUTDOWN → %s", payload.hex())
         await self.async_send_command(payload, expect_opcode=None)
+
+    async def _async_send_control(
+        self, label: str, payload: bytes, *, expect_response: bool = True
+    ) -> None:
+        _LOGGER.info("Dolphin Plus %s -> %s", label, payload.hex())
+        await self.async_send_command(
+            payload, expect_opcode=None, expect_response=expect_response
+        )
+
+    async def async_set_cleaning_mode(self, mode: int) -> None:
+        """Start a cleaning cycle in ``mode`` (``set_cleaning_mode``).
+
+        Like the vendor app this both selects the program and starts it.
+        """
+        spec = await self._ensure_spec()
+        await self._async_send_control(
+            "SET CLEANING MODE", build_set_cleaning_mode(spec, mode)
+        )
+
+    async def async_set_cycle_time(self, minutes: int) -> None:
+        spec = await self._ensure_spec()
+        await self._async_send_control(
+            "SET CYCLE TIME", build_set_cycle_time(spec, minutes)
+        )
+
+    async def async_reset_filter_indicator(self) -> None:
+        spec = await self._ensure_spec()
+        await self._async_send_control(
+            "RESET FILTER INDICATOR", build_reset_filter_indicator(spec)
+        )
+
+    async def async_manual_drive(self, direction: str | int, speed: int) -> None:
+        """Send one steering frame (no response is expected)."""
+        spec = await self._ensure_spec()
+        await self._async_send_control(
+            "MANUAL DRIVE",
+            build_manual_drive(spec, direction, speed),
+            expect_response=False,
+        )
+
+    async def async_quit_manual_drive(self) -> None:
+        spec = await self._ensure_spec()
+        await self._async_send_control(
+            "QUIT MANUAL DRIVE",
+            build_quit_manual_drive(spec),
+            expect_response=False,
+        )
 
     async def async_read_system_status(self) -> dict[str, int | None] | None:
         if self._command_waiters > 0:

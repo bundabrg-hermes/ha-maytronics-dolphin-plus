@@ -32,6 +32,11 @@ IOT_NOTIFY_PREFIX = "03:"
 CMD_START_UP = "start_up_dolphin"
 CMD_SHUTDOWN = "shutdown_dolphin"
 CMD_SYSTEM_STATUS = "system_status"
+CMD_SET_CLEANING_MODE = "set_cleaning_mode"
+CMD_SET_CYCLE_TIME = "set_cycle_time"
+CMD_MANUAL_DRIVE = "manual_drive"
+CMD_QUIT_MANUAL_DRIVE = "quit_manual_drive"
+CMD_RESET_FILTER_INDICATOR = "reset_filter_indicator"
 
 _HEX_CHARS = re.compile(rb"^[0-9a-fA-F]+$")
 
@@ -123,6 +128,62 @@ def build_shutdown(spec: dict[str, Any]) -> bytes:
 
 def build_system_status_request(spec: dict[str, Any]) -> bytes:
     return build_iot_command(spec, CMD_SYSTEM_STATUS)
+
+
+# --- Control commands -------------------------------------------------------
+#
+# Cleaning mode and cycle time target the drive controller (``FFE9``); steering
+# and the filter-indicator reset target ``FFF7``.  Steering frames take effect
+# physically but never return a clean ACK, so callers must send them without
+# waiting for a response (waiting can abort the ACL link on some firmwares).
+
+DRIVE_DIRECTIONS = {
+    "stop": 0x01,
+    "forward": 0x02,
+    "backward": 0x03,
+    "right": 0x04,
+    "left": 0x05,
+}
+
+
+def build_set_cleaning_mode(spec: dict[str, Any], mode: int) -> bytes:
+    """Start a cleaning cycle in ``mode`` (see :data:`CLEAN_MODE_NAMES`)."""
+    code = int(mode)
+    if code == 254 or code not in CLEAN_MODE_NAMES:
+        raise ValueError(f"Unsupported cleaning mode: {mode}")
+    return build_iot_command(spec, CMD_SET_CLEANING_MODE, bytes([code]))
+
+
+def build_set_cycle_time(spec: dict[str, Any], minutes: int) -> bytes:
+    """Set the cycle length in minutes (2-byte big-endian payload)."""
+    value = int(minutes)
+    if not 1 <= value <= 600:
+        raise ValueError(f"Cycle time out of range: {minutes}")
+    return build_iot_command(
+        spec, CMD_SET_CYCLE_TIME, bytes([(value >> 8) & 0xFF, value & 0xFF])
+    )
+
+
+def build_manual_drive(spec: dict[str, Any], direction: str | int, speed: int) -> bytes:
+    """Steering frame: a direction from :data:`DRIVE_DIRECTIONS` + speed 0-100."""
+    if isinstance(direction, str):
+        if direction not in DRIVE_DIRECTIONS:
+            raise ValueError(f"Unknown drive direction: {direction}")
+        code = DRIVE_DIRECTIONS[direction]
+    else:
+        code = int(direction)
+    rate = max(0, min(100, int(speed)))
+    return build_iot_command(spec, CMD_MANUAL_DRIVE, bytes([code, rate]))
+
+
+def build_quit_manual_drive(spec: dict[str, Any]) -> bytes:
+    """Leave remote-control mode (the robot parks its drive outputs)."""
+    return build_iot_command(spec, CMD_QUIT_MANUAL_DRIVE)
+
+
+def build_reset_filter_indicator(spec: dict[str, Any]) -> bytes:
+    """Clear the "filter full" indicator on the power supply."""
+    return build_iot_command(spec, CMD_RESET_FILTER_INDICATOR)
 
 
 
